@@ -210,11 +210,13 @@ Run the corresponding executable file according to the installation method for d
    - For client connections, click the `[Connect]` button
    - For server connections, click the `[Start]` button
 
-3. **Select Message Mode**
-   - Above the bottom input box, select the message sending mode: Text mode or Hex mode
+3. **Select Send Mode and Receive View**
+   - The "Send Mode" next to the bottom input decides what you type: text or hex
    - Text mode: Directly enter string messages
    - Hex mode: Enter hexadecimal format data, such as "0A0B0C"
    - Switching modes converts the input content as UTF-8 automatically (Text ⇄ Hex), no manual rewriting needed; you can also right-click inside the input and pick "Convert to Hex / Convert to Text" — the result is shown in a read-only window you can copy from, and the input itself is left untouched
+   - The "View" toggle in the message toolbar controls how **received** messages are rendered (text / hex), independently of the send mode — e.g. send hex commands while reading device logs as text. The choice is remembered per connection
+   - In hex view the "Format" (raw/pretty/minified) button is greyed out, since JSON formatting is meaningless for hex strings
    - Right-clicking inside the input also offers cut/copy/paste/select-all, plus checksum tools that compute XOR, Sum8, LRC, CRC16-Modbus, CRC16-CCITT-FALSE and CRC32 over the input directly
 
 4. **Send Messages**

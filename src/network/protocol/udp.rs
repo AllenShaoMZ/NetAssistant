@@ -1033,6 +1033,7 @@ mod tests {
             listen_port: port,
             decoder_config: crate::config::connection::DecoderConfig::default(),
             message_input_mode: "text".to_string(),
+            receive_display_mode: None,
             send_trailer: crate::config::connection::TrailerKind::default(),
         }
     }

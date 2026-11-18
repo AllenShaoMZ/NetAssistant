@@ -41,6 +41,7 @@ For the causes, four framing solutions and debugging steps, see [TCP sticky pack
 - **Connection config editing**: saved connection configs can be edited directly, no need to delete and recreate
 - **Message search**: `Ctrl+F` or the toolbar magnifier opens a non-modal search overlay with a live `i/n` match counter; jump ring-wise with `Enter` / `Shift+Enter` or the up/down buttons, and the matching row is highlighted and scrolled into view
 - **Message count cap**: configure "Keep last N" messages (default 10000, `0` = unlimited); once exceeded the oldest messages are dropped to bound memory usage. It is linked to auto-scroll, so nothing is dropped while auto-scroll is off
+- **Receive view decoupled from send mode**: the "View" toggle in the message toolbar switches how received messages are rendered (text / hex) independently of the send mode — e.g. send hex commands while reading device logs as text. The choice is persisted per connection, search matches what you see, and non-UTF-8 payloads are shown with `\xNN` escapes instead of a single placeholder
 
 ![Favorite message screenshot](../../assets/screenshots/en/screenshot_favorite_message.png)
 

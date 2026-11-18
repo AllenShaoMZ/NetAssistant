@@ -98,7 +98,7 @@ pub struct Message {
     /// 显示格式化缓存(惰性): Some((模式, 格式化后的内容))。
     /// 切换显示模式时不再全量重算(toggle 为 O(1)),渲染可见项时按需计算并填充。
     /// Clone 时重置为 None(日志/导出克隆走基础内容,无需携带缓存)。
-    display_cache: Mutex<Option<(MessageDisplayMode, String)>>,
+    display_cache: Mutex<Option<(MessageType, MessageDisplayMode, String)>>,
 }
 
 /// 全局消息 id 计数器：进程内单调递增（Relaxed 足够，仅需唯一性）。
@@ -161,7 +161,9 @@ impl Message {
         match message_type {
             MessageType::Text => match String::from_utf8(raw_data.to_vec()) {
                 Ok(text) => text,
-                Err(_) => "[非UTF-8数据]".to_string(),
+                // 非 UTF-8（二进制帧、GBK 文本等）不再整条丢弃成占位符：
+                // 可打印 ASCII 原样保留，其余字节转义为 \xNN，至少能看到帧结构。
+                Err(_) => escape_non_utf8(raw_data),
             },
             MessageType::Hex => raw_data
                 .iter()
@@ -192,34 +194,69 @@ impl Message {
 
     /// 获取当前显示模式下的内容（惰性计算并缓存）
     ///
-    /// Normal 模式直接返回基础内容;JSON 美化/压缩模式首次调用时从 raw_data
-    /// 计算并写入 display_cache,后续渲染命中缓存。仅可见项产生计算开销,
-    /// 1 万条消息的列表切换模式为 O(1) 而非 O(全部)。
-    pub fn display_content(&self, mode: MessageDisplayMode) -> String {
-        if mode == MessageDisplayMode::Normal {
+    /// `view` 是**接收区显示视图**（文本 / 十六进制），与发送输入模式解耦：
+    /// 用户可以用 HEX 发送命令、同时用文本看设备日志。
+    /// `mode` 是 JSON 排版模式，仅在 `view == Text` 时生效（十六进制串没有 JSON 概念）。
+    ///
+    /// 快路径：`view` 与消息自身 `message_type` 一致且 `mode == Normal` 时直接返回
+    /// 已缓存的语义内容，零重算；其余组合按 (视图, 排版模式) 缓存，仅可见项产生开销。
+    pub fn display_content(&self, view: MessageType, mode: MessageDisplayMode) -> String {
+        if view == self.message_type && mode == MessageDisplayMode::Normal {
             return self.cached_content.clone();
         }
         if let Ok(cache) = self.display_cache.lock() {
-            if let Some((cached_mode, content)) = cache.as_ref() {
-                if *cached_mode == mode {
+            if let Some((cached_view, cached_mode, content)) = cache.as_ref() {
+                if *cached_view == view && *cached_mode == mode {
                     return content.clone();
                 }
             }
         }
-        let base = Self::compute_content(&self.raw_data, self.message_type);
+        let base = if view == self.message_type {
+            self.cached_content.clone()
+        } else {
+            Self::compute_content(&self.raw_data, view)
+        };
         let formatted = match mode {
             MessageDisplayMode::JsonPretty | MessageDisplayMode::JsonMinified
-                if self.message_type == MessageType::Text =>
+                if view == MessageType::Text =>
             {
                 format_json_text(&base, mode)
             }
             _ => base,
         };
         if let Ok(mut cache) = self.display_cache.lock() {
-            *cache = Some((mode, formatted.clone()));
+            *cache = Some((view, mode, formatted.clone()));
         }
         formatted
     }
+
+    /// 按指定视图取内容，不做 JSON 排版（搜索匹配用：所见即所搜）
+    pub fn content_for_view(&self, view: MessageType) -> String {
+        if view == self.message_type {
+            return self.cached_content.clone();
+        }
+        Self::compute_content(&self.raw_data, view)
+    }
+}
+
+/// 非 UTF-8 载荷的文本视图：可打印 ASCII 与常见控制符原样保留，
+/// 其余字节转义为 `\xNN`（不追求往返一致，只为让二进制帧在文本视图下仍可读）。
+fn escape_non_utf8(raw_data: &[u8]) -> String {
+    // 反斜杠用数值构造：源码里不出现转义序列本身，避免二次转义
+    let backslash = char::from(0x5C);
+    let mut out = String::with_capacity(raw_data.len() + 8);
+    for &b in raw_data {
+        match b {
+            0x0A | 0x0D | 0x09 => out.push(b as char),
+            0x20..=0x7E => out.push(b as char),
+            _ => {
+                out.push(backslash);
+                out.push('x');
+                out.push_str(&format!("{:02X}", b));
+            }
+        }
+    }
+    out
 }
 
 // 手动实现 Clone: display_cache(Mutex)不可派生克隆,且克隆件(日志/导出)无需携带缓存
@@ -496,48 +533,56 @@ mod tests {
 
         // Normal 模式: 直接返回基础内容
         assert_eq!(
-            message.display_content(MessageDisplayMode::Normal),
+            message.display_content(MessageType::Text, MessageDisplayMode::Normal),
             r#"{"name":"test","value":1}"#
         );
 
         // JsonPretty: 惰性计算并缓存(多次调用结果一致)
-        let pretty = message.display_content(MessageDisplayMode::JsonPretty);
+        let pretty = message.display_content(MessageType::Text, MessageDisplayMode::JsonPretty);
         assert!(pretty.contains("\n"), "美化后应含换行: {}", pretty);
         assert_eq!(
-            message.display_content(MessageDisplayMode::JsonPretty),
+            message.display_content(MessageType::Text, MessageDisplayMode::JsonPretty),
             pretty
         );
 
         // JsonMinified: 与基础内容一致(本就是压缩 JSON)
         assert_eq!(
-            message.display_content(MessageDisplayMode::JsonMinified),
+            message.display_content(MessageType::Text, MessageDisplayMode::JsonMinified),
             r#"{"name":"test","value":1}"#
         );
 
         // 非 JSON 文本: 格式化失败时原样返回
         let plain = Message::new(MessageDirection::Sent, b"Hello".to_vec(), MessageType::Text);
         assert_eq!(
-            plain.display_content(MessageDisplayMode::JsonPretty),
+            plain.display_content(MessageType::Text, MessageDisplayMode::JsonPretty),
             "Hello"
         );
     }
 
     #[test]
+    /// 切换语义类型（发送模式）后：语义内容与显示缓存一起更新，
+    /// 而显式指定视图仍能还原原文（视图与语义解耦）
     fn test_display_cache_invalidated_by_set_message_type() {
         use super::MessageDisplayMode;
 
         let mut message =
             Message::new(MessageDirection::Sent, b"Hello".to_vec(), MessageType::Text);
         assert_eq!(
-            message.display_content(MessageDisplayMode::JsonPretty),
+            message.display_content(MessageType::Text, MessageDisplayMode::JsonPretty),
             "Hello"
         );
 
-        // 切换类型后显示缓存应失效,按新基础内容重新计算
+        // 切换类型后语义内容按新类型重算,显示缓存失效
         message.set_message_type(MessageType::Hex);
+        assert_eq!(message.get_content_by_type(), "48 65 6C 6C 6F");
         assert_eq!(
-            message.display_content(MessageDisplayMode::JsonPretty),
+            message.display_content(MessageType::Hex, MessageDisplayMode::JsonPretty),
             "48 65 6C 6C 6F"
+        );
+        // 视图与语义解耦: 文本视图依旧还原原文
+        assert_eq!(
+            message.display_content(MessageType::Text, MessageDisplayMode::Normal),
+            "Hello"
         );
     }
 
@@ -546,12 +591,12 @@ mod tests {
         use super::MessageDisplayMode;
 
         let message = Message::new(MessageDirection::Sent, b"Hello".to_vec(), MessageType::Text);
-        let _ = message.display_content(MessageDisplayMode::JsonPretty);
+        let _ = message.display_content(MessageType::Text, MessageDisplayMode::JsonPretty);
 
         // 克隆件(日志/导出路径)不携带显示缓存,但显示结果仍可按需重算
         let clone = message.clone();
         assert_eq!(
-            clone.display_content(MessageDisplayMode::JsonPretty),
+            clone.display_content(MessageType::Text, MessageDisplayMode::JsonPretty),
             "Hello"
         );
     }
@@ -808,5 +853,52 @@ mod tests {
         let ptr_after = Arc::as_ptr(&state.messages);
         // refcount==1 时 Arc::make_mut 原地修改，指针不变
         assert_eq!(ptr_before, ptr_after);
+    }
+
+    #[test]
+    /// 接收显示视图与发送模式解耦：同一条消息可按文本或十六进制渲染
+    fn test_display_content_view_decoupled_from_message_type() {
+        use super::MessageDisplayMode;
+
+        // 发送模式是 hex 的消息（等价于“十六进制发出”），仍可用文本视图查看
+        let message = Message::new(MessageDirection::Sent, b"Hello".to_vec(), MessageType::Hex);
+        assert_eq!(message.get_content_by_type(), "48 65 6C 6C 6F");
+        assert_eq!(
+            message.display_content(MessageType::Text, MessageDisplayMode::Normal),
+            "Hello",
+            "文本视图应还原原文，与发送模式无关"
+        );
+        assert_eq!(
+            message.display_content(MessageType::Hex, MessageDisplayMode::Normal),
+            "48 65 6C 6C 6F",
+            "十六进制视图与语义内容一致"
+        );
+    }
+
+    #[test]
+    /// 文本视图不再把二进制帧整条丢弃成占位符：可打印 ASCII 保留，其余转义
+    fn test_text_view_escapes_non_utf8_bytes() {
+        use super::MessageDisplayMode;
+
+        let raw = vec![0xFFu8, 0x00, b'A', b'B'];
+        let message = Message::new(MessageDirection::Received, raw, MessageType::Hex);
+        let text = message.display_content(MessageType::Text, MessageDisplayMode::Normal);
+        let bs = char::from(0x5C);
+        assert_eq!(text, format!("{bs}xFF{bs}x00AB"));
+    }
+
+    #[test]
+    /// 十六进制视图下 JSON 排版模式不生效（无 JSON 概念）
+    fn test_hex_view_ignores_json_format_mode() {
+        use super::MessageDisplayMode;
+
+        let json = br#"{"a":1}"#.to_vec();
+        let message = Message::new(MessageDirection::Received, json, MessageType::Text);
+        let pretty = message.display_content(MessageType::Hex, MessageDisplayMode::JsonPretty);
+        assert!(
+            !pretty.contains(char::from(0x0A)),
+            "十六进制视图不应被 JSON 美化: {pretty}"
+        );
+        assert_eq!(pretty, message.content_for_view(MessageType::Hex));
     }
 }

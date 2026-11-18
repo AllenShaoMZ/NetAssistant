@@ -42,8 +42,8 @@ new_connection:
     zh-CN: "▶ 更多设置"
     en: "▶ More Settings"
   message_mode_label:
-    zh-CN: 消息模式
-    en: Message Mode
+    zh-CN: 发送模式
+    en: Send Mode
   mode_text:
     zh-CN: 文本
     en: Text

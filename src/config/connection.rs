@@ -390,6 +390,12 @@ pub struct ClientConfig {
     /// 发送消息输入模式：text / hex
     #[serde(default = "default_message_input_mode")]
     pub message_input_mode: String,
+    /// 接收消息显示视图：text / hex。
+    ///
+    /// `None` = **跟随发送输入模式**（历史行为：老配置无此字段时，接收区与输入框同格式），
+    /// `Some("text"/"hex")` = 用户显式指定，此后与发送模式解耦。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receive_display_mode: Option<String>,
     /// 本地绑定地址(None=系统自动选择网卡)，仅支持 IP 字面量，如 "192.168.1.100"
     #[serde(default)]
     pub local_address: Option<String>,
@@ -413,6 +419,7 @@ impl Default for ClientConfig {
             server_port: 8080,
             decoder_config: DecoderConfig::default(),
             message_input_mode: default_message_input_mode(),
+            receive_display_mode: None,
             local_address: None,
             local_port: None,
             send_trailer: TrailerKind::None,
@@ -434,6 +441,9 @@ pub struct ServerConfig {
     /// 发送消息输入模式：text / hex
     #[serde(default = "default_message_input_mode")]
     pub message_input_mode: String,
+    /// 接收消息显示视图：text / hex（`None` = 跟随发送输入模式，语义同 `ClientConfig`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receive_display_mode: Option<String>,
     /// 发送结尾追加字符(默认不追加)
     #[serde(default)]
     pub send_trailer: TrailerKind,
@@ -448,6 +458,7 @@ impl Default for ServerConfig {
             listen_port: 8080,
             decoder_config: DecoderConfig::default(),
             message_input_mode: default_message_input_mode(),
+            receive_display_mode: None,
             send_trailer: TrailerKind::None,
         }
     }
@@ -495,6 +506,14 @@ impl ConnectionConfig {
         match self {
             ConnectionConfig::Client(config) => &config.message_input_mode,
             ConnectionConfig::Server(config) => &config.message_input_mode,
+        }
+    }
+
+    /// 获取接收显示视图（text / hex）；`None` = 跟随发送输入模式
+    pub fn receive_display_mode(&self) -> Option<&str> {
+        match self {
+            ConnectionConfig::Client(config) => config.receive_display_mode.as_deref(),
+            ConnectionConfig::Server(config) => config.receive_display_mode.as_deref(),
         }
     }
 
@@ -546,6 +565,7 @@ impl ConnectionConfig {
             server_port,
             decoder_config: DecoderConfig::default(),
             message_input_mode: default_message_input_mode(),
+            receive_display_mode: None,
             local_address: None,
             local_port: None,
             send_trailer: TrailerKind::None,
@@ -562,6 +582,7 @@ impl ConnectionConfig {
             listen_port,
             decoder_config: DecoderConfig::default(),
             message_input_mode: default_message_input_mode(),
+            receive_display_mode: None,
             send_trailer: TrailerKind::None,
         })
     }

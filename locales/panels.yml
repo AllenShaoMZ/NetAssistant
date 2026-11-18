@@ -531,14 +531,20 @@ connection_tab:
     zh-CN: 日志记录
     en: Logging
   message_mode_label:
-    zh-CN: "消息模式:"
-    en: "Message Mode:"
+    zh-CN: "发送模式:"
+    en: "Send Mode:"
   mode_text:
     zh-CN: 文本
     en: Text
   mode_hex:
     zh-CN: 十六进制
     en: Hex
+  receive_view:
+    zh-CN: "显示:%{label}"
+    en: "View: %{label}"
+  receive_view_tooltip:
+    zh-CN: 切换接收消息显示格式（文本/十六进制），只影响记录区显示，不改变发送模式
+    en: Toggle how received messages are shown (text/hex); display only, send mode is unaffected
   auto_reply:
     zh-CN: 自动回复
     en: Auto Reply

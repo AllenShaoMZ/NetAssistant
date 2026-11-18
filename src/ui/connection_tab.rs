@@ -45,7 +45,7 @@ use crate::core::toolbox::{ToolCategory, compute_tool, resolve_tools};
 use crate::custom_icons::CustomIconName;
 use crate::log_writer::LogWriter;
 use crate::message::{
-    DEFAULT_KEEP_LAST, Message, MessageDirection, MessageDisplayMode, MessageListState,
+    DEFAULT_KEEP_LAST, Message, MessageDirection, MessageDisplayMode, MessageListState, MessageType,
 };
 use crate::network::events::MqttPublishMeta;
 use crate::send_task::{IntervalHandle, PeriodicSource, SendTaskEntry};
@@ -164,6 +164,12 @@ pub struct ConnectionTabState {
     // 消息显示模式（原始/美化/压缩）
     pub message_display_mode: MessageDisplayMode,
 
+    /// 接收区显示视图（文本 / 十六进制），与发送输入模式解耦。
+    ///
+    /// `None` = 跟随 `message_input_mode`（历史行为，旧配置升级后观感不变）；
+    /// `Some(_)` = 用户在工具栏显式选过，此后切发送模式不影响接收显示。
+    pub receive_display_mode: Option<MessageType>,
+
     // 每个标签页独立的功能
     pub message_input: Option<Entity<EditorState>>,
     /// 发送输入框（hex 模式）的十六进制编辑器状态，与 message_input 同步创建
@@ -279,6 +285,20 @@ pub struct ConnectionTabState {
 }
 
 impl ConnectionTabState {
+    /// 接收区实际生效的显示视图：显式设置优先，否则跟随发送输入模式。
+    ///
+    /// 旧配置没有 `receive_display_mode`，解析为 None → 与历史行为逐字一致
+    /// （hex 连接的接收区仍显示十六进制）。
+    pub fn effective_receive_view(&self) -> MessageType {
+        self.receive_display_mode.unwrap_or_else(|| {
+            if self.message_input_mode == "hex" {
+                MessageType::Hex
+            } else {
+                MessageType::Text
+            }
+        })
+    }
+
     pub fn new(
         connection_config: ConnectionConfig,
         window: &mut Window,
@@ -286,6 +306,12 @@ impl ConnectionTabState {
     ) -> Self {
         // 从连接配置中恢复发送消息输入模式
         let message_input_mode = connection_config.message_input_mode().to_string();
+        // 从连接配置中恢复接收显示视图（未显式设置过 = None，跟随发送模式）
+        let receive_display_mode = match connection_config.receive_display_mode() {
+            Some("hex") => Some(MessageType::Hex),
+            Some("text") => Some(MessageType::Text),
+            _ => None,
+        };
         // 运行期结尾追加设置的初始值取自持久化配置(下拉改动即时生效, 无需重连)
         let send_trailer = connection_config.send_trailer();
         // 手动发送与周期发送共享的递增序号
@@ -334,6 +360,8 @@ impl ConnectionTabState {
 
             // 消息显示模式默认为原始
             message_display_mode: MessageDisplayMode::Normal,
+            // 接收显示视图（None = 跟随发送模式）
+            receive_display_mode,
 
             // 初始化每个标签页独立的功能
             message_input: Some(cx.new(|cx| {
@@ -2425,6 +2453,13 @@ impl<'a> ConnectionTab<'a> {
         let theme = cx.theme().clone();
         let tab_id = self.tab_id.clone();
         let is_empty = self.tab_state.message_list.messages.is_empty();
+        // 接收区显示视图（文本 / 十六进制）：与发送输入模式解耦
+        let receive_view = self.tab_state.effective_receive_view();
+        let receive_view_is_hex = receive_view == MessageType::Hex;
+        let receive_view_label = match receive_view {
+            MessageType::Hex => t!("connection_tab.mode_hex"),
+            MessageType::Text => t!("connection_tab.mode_text"),
+        };
 
         div()
             .flex()
@@ -2597,10 +2632,62 @@ impl<'a> ConnectionTab<'a> {
                                         ),
                                     )
                             })
+                            // 接收显示视图切换（文本/十六进制）：只影响记录区渲染，与发送模式无关
+                            .child(
+                                div()
+                                    .id("msg-view-toggle")
+                                    .cursor_pointer()
+                                    .text_xs()
+                                    .font_medium()
+                                    .text_color(theme.secondary_foreground)
+                                    .bg(theme.secondary)
+                                    .border(px(1.0))
+                                    .border_color(theme.secondary)
+                                    .rounded(px(2.0))
+                                    .px(px(10.0))
+                                    .py(px(4.0))
+                                    .hover(|style| {
+                                        style.bg(theme.secondary_hover)
+                                            .border_color(theme.secondary_hover)
+                                    })
+                                    .child(
+                                        t!(
+                                            "connection_tab.receive_view",
+                                            label = receive_view_label
+                                        )
+                                        .to_string(),
+                                    )
+                                    .tooltip(|window, cx| {
+                                        Tooltip::new(
+                                            t!("connection_tab.receive_view_tooltip").to_string(),
+                                        )
+                                        .build(window, cx)
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener({
+                                            let tab_id_view = tab_id.clone();
+                                            move |app, _event, _window, cx| {
+                                                let next = if receive_view_is_hex {
+                                                    MessageType::Text
+                                                } else {
+                                                    MessageType::Hex
+                                                };
+                                                app.set_receive_display_mode(
+                                                    tab_id_view.clone(),
+                                                    next,
+                                                    cx,
+                                                );
+                                            }
+                                        }),
+                                    ),
+                            )
                             // 消息显示模式切换按钮（原始/美化/压缩）
                             .child(
                                 div()
                                     .id("msg-format-toggle")
+                                    // 十六进制视图下 JSON 排版无意义：置灰且不响应点击
+                                    .when(receive_view_is_hex, |el| el.opacity(0.35))
                                     .cursor_pointer()
                                     .text_xs()
                                     .font_medium()
@@ -2624,6 +2711,9 @@ impl<'a> ConnectionTab<'a> {
                                         cx.listener({
                                             let tab_id_format = tab_id.clone();
                                             move |app, _event, _window, cx| {
+                                                if receive_view_is_hex {
+                                                    return;
+                                                }
                                                 app.toggle_message_display_mode(tab_id_format.clone(), cx);
                                             }
                                         }),
@@ -2906,30 +2996,22 @@ impl<'a> ConnectionTab<'a> {
                                             let is_sent = message.direction == MessageDirection::Sent;
                                             let is_current_match =
                                                 current_match_id == Some(message.id);
-                                            // 原始内容(未格式化),收藏 key 的基准
+                                            // 原始内容(语义内容, 随发送模式), 收藏 key 的基准
                                             let raw_text = message.get_content_by_type();
-                                            // 展示/复制按当前显示模式(惰性计算并缓存,仅可见项产生开销)
-                                            let display_text: SharedString =
-                                                if display_mode == MessageDisplayMode::Normal {
-                                                    SharedString::from(raw_text)
-                                                } else {
-                                                    SharedString::from(
-                                                        message.display_content(display_mode),
-                                                    )
-                                                };
+                                            // 展示/复制按「接收显示视图 + 排版模式」渲染
+                                            // (惰性计算并缓存, 仅可见项产生开销)
+                                            let display_text: SharedString = SharedString::from(
+                                                message.display_content(receive_view, display_mode),
+                                            );
                                             // 右键菜单取源：仅捕获展示文本本身，避免渲染树额外持有
                                             // Arc<Vec<Message>> 而拖慢入队侧的 Arc::make_mut
                                             let menu_text = display_text.clone();
                                             let bubble_focus_for_msg = bubble_focus.clone();
                                             let bubble_focus_on_click = bubble_focus.clone();
-                                            // 收藏 key 固定用原始内容,与显示模式解耦:
-                                            // 切换格式化不会让星标熄灭,也不会重复收藏
+                                            // 收藏 key 固定用语义原始内容,与显示视图/排版解耦:
+                                            // 切十六进制看或切换格式化都不会让星标熄灭,也不会重复收藏
                                             let favorite_key: SharedString =
-                                                if display_mode == MessageDisplayMode::Normal {
-                                                    display_text.clone()
-                                                } else {
-                                                    SharedString::from(raw_text)
-                                                };
+                                                SharedString::from(raw_text);
                                             let is_favorited =
                                                 favorited_contents.contains(favorite_key.as_ref());
                                             let should_show = if message.source.is_none() {

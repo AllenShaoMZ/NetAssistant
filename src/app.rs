@@ -1914,8 +1914,9 @@ impl NetAssistantApp {
 
     /// 重算某个标签页的命中集合（按 `Message.id` 缓存，永不缓存下标）。
     ///
-    /// 匹配目标为消息原始内容 `get_content_by_type()`（与显示格式解耦），
-    /// 范围限定为当前可见集合（已应用客户端过滤），保证计数与用户所见一致。
+    /// 匹配目标为**当前接收显示视图**的内容（`content_for_view`）：
+    /// 用户在十六进制视图下搜 `41 42` 就该命中，文本视图下搜原文就该命中 ——
+    /// 所见即所搜。范围限定为当前可见集合（已应用客户端过滤），保证计数与用户所见一致。
     fn recalc_search_matches(&mut self, tab_id: &str) {
         let Some(tab_state) = self.connection_tabs.get_mut(tab_id) else {
             return;
@@ -1936,6 +1937,8 @@ impl NetAssistantApp {
             .selected_client
             .as_ref()
             .map(|addr| addr.to_string());
+        // 搜索跟着接收显示视图走：看到十六进制就按十六进制串匹配
+        let view = tab_state.effective_receive_view();
         let mut ids: Vec<u64> = Vec::new();
         for message in tab_state.message_list.messages.iter() {
             if let (Some(selected), Some(source)) =
@@ -1946,7 +1949,7 @@ impl NetAssistantApp {
                 }
             }
             if message
-                .get_content_by_type()
+                .content_for_view(view)
                 .to_lowercase()
                 .contains(&needle)
             {
@@ -4289,6 +4292,47 @@ impl NetAssistantApp {
             debug!("[消息显示模式] 标签页 {} 切换为: {:?}", tab_id, new_mode);
             cx.notify();
         }
+    }
+
+    /// 切换接收显示视图（文本/十六进制）
+    ///
+    /// 与发送输入模式完全解耦：支持「HEX 发送 + 文本接收」这类组合。
+    /// 选择写回连接配置（下次打开沿用）；搜索命中集合同步按新视图重算，
+    /// 保证「所见即所搜」。
+    pub fn set_receive_display_mode(
+        &mut self,
+        tab_id: String,
+        view: MessageType,
+        cx: &mut Context<Self>,
+    ) {
+        let value = match view {
+            MessageType::Hex => "hex",
+            MessageType::Text => "text",
+        };
+        let (updated, needs_search_recalc) = {
+            let Some(tab_state) = self.connection_tabs.get_mut(&tab_id) else {
+                return;
+            };
+            if tab_state.receive_display_mode == Some(view) {
+                return;
+            }
+            tab_state.receive_display_mode = Some(view);
+            match &mut tab_state.connection_config {
+                ConnectionConfig::Client(c) => c.receive_display_mode = Some(value.to_string()),
+                ConnectionConfig::Server(c) => c.receive_display_mode = Some(value.to_string()),
+            }
+            let cfg = tab_state.connection_config.clone();
+            (
+                cfg,
+                tab_state.search_open && !tab_state.search_query.is_empty(),
+            )
+        };
+        self.storage.update_connection(updated);
+        if needs_search_recalc {
+            self.recalc_search_matches(&tab_id);
+        }
+        debug!("[接收显示] 标签页 {} 切换为: {:?}", tab_id, view);
+        cx.notify();
     }
 
     /// 切换日志记录开关
