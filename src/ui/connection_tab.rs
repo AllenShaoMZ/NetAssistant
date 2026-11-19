@@ -2721,6 +2721,7 @@ impl<'a> ConnectionTab<'a> {
                             )
                             .child(
                                 div()
+                                    .id("msg-export-btn")
                                     .cursor_pointer()
                                     .text_xs()
                                     .font_medium()
@@ -2736,6 +2737,12 @@ impl<'a> ConnectionTab<'a> {
                                             .border_color(theme.secondary_hover)
                                     })
                                     .child(t!("connection_tab.export").to_string())
+                                    .tooltip(|window, cx| {
+                                        Tooltip::new(
+                                            t!("connection_tab.export_tooltip").to_string(),
+                                        )
+                                        .build(window, cx)
+                                    })
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener({

@@ -599,6 +599,9 @@ connection_tab:
   export:
     zh-CN: 导出
     en: Export
+  export_tooltip:
+    zh-CN: 导出当前消息记录（TXT/JSON/CSV），内容与「类型」列跟随上面的「显示」选择
+    en: Export current messages (TXT/JSON/CSV); content and type column follow the View toggle above
   clear:
     zh-CN: 清空
     en: Clear

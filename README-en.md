@@ -215,7 +215,7 @@ Run the corresponding executable file according to the installation method for d
    - Text mode: Directly enter string messages
    - Hex mode: Enter hexadecimal format data, such as "0A0B0C"
    - Switching modes converts the input content as UTF-8 automatically (Text ⇄ Hex), no manual rewriting needed; you can also right-click inside the input and pick "Convert to Hex / Convert to Text" — the result is shown in a read-only window you can copy from, and the input itself is left untouched
-   - The "View" toggle in the message toolbar controls how **received** messages are rendered (text / hex), independently of the send mode — e.g. send hex commands while reading device logs as text. The choice is remembered per connection
+   - The "View" toggle in the message toolbar controls how **received** messages are rendered (text / hex), independently of the send mode — e.g. send hex commands while reading device logs as text. The choice is remembered per connection, and TXT/JSON/CSV exports follow it
    - In hex view the "Format" (raw/pretty/minified) button is greyed out, since JSON formatting is meaningless for hex strings
    - Right-clicking inside the input also offers cut/copy/paste/select-all, plus checksum tools that compute XOR, Sum8, LRC, CRC16-Modbus, CRC16-CCITT-FALSE and CRC32 over the input directly
 

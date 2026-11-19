@@ -4239,11 +4239,17 @@ impl NetAssistantApp {
         }
 
         // 获取连接地址标识用于默认文件名（如 TCP_127.0.0.1_8080）
-        let address_label = self
+        // 同时取当前「显示」视图：导出内容跟随界面上看到的口径（文本 / 十六进制）
+        let (address_label, export_view) = self
             .connection_tabs
             .get(&tab_id)
-            .map(|t| t.connection_config.address_label())
-            .unwrap_or_else(|| "export".to_string());
+            .map(|t| {
+                (
+                    t.connection_config.address_label(),
+                    t.effective_receive_view(),
+                )
+            })
+            .unwrap_or_else(|| ("export".to_string(), MessageType::Text));
 
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
         let default_filename = format!("{}_{}.txt", address_label, timestamp);
@@ -4264,7 +4270,7 @@ impl NetAssistantApp {
                 // 根据扩展名确定格式，默认为 txt
                 let format = ExportFormat::from_extension(path).unwrap_or(ExportFormat::Txt);
 
-                match export::format_messages(&messages, format) {
+                match export::format_messages(&messages, format, export_view) {
                     Ok(content) => match std::fs::write(path, content) {
                         Ok(_) => {
                             debug!("[导出] 消息记录已导出到: {:?}", path);
